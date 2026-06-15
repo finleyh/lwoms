@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-curl.py — low-level curl helpers for netcat-mcp's web-scraping tools.
+curl_engine.py — curl-backed engine for the web tools (http_fetch, web_scrape).
 
-MCP-agnostic, mirroring ``netcat.py``: a subprocess wrapper around the `curl`
-binary plus small stdlib-only HTML parsers (title, links, visible text). The
-tool definitions that use these live in ``tools.py``.
+MCP-agnostic: a subprocess wrapper around the `curl` binary plus small
+stdlib-only HTML parsers (title, links, visible text). The tool definitions that
+use these live in ``mcp_tools.py``.
 """
 
 from __future__ import annotations
@@ -36,13 +36,13 @@ def _env_int(name: str, default: int) -> int:
 # Overridable via environment variables (or .env). Defaults match the original
 # hard-coded values.
 
-CURL_BIN = os.getenv("NETCAT_MCP_CURL_BIN") or shutil.which("curl") or "curl"
+CURL_BIN = os.getenv("NETADMIN_MCP_CURL_BIN") or shutil.which("curl") or "curl"
 
-WEB_DEFAULT_TIMEOUT = _env_int("NETCAT_MCP_WEB_DEFAULT_TIMEOUT", 15)  # seconds for a whole request
-WEB_MAX_TIMEOUT = _env_int("NETCAT_MCP_WEB_MAX_TIMEOUT", 60)
-WEB_MAX_REDIRECTS = _env_int("NETCAT_MCP_WEB_MAX_REDIRECTS", 10)
-WEB_MAX_BYTES = _env_int("NETCAT_MCP_WEB_MAX_BYTES", 5_000_000)       # 5 MB hard cap on downloaded body
-DEFAULT_USER_AGENT = os.getenv("NETCAT_MCP_USER_AGENT") or "netcat-mcp/1.0 (+curl)"
+WEB_DEFAULT_TIMEOUT = _env_int("NETADMIN_MCP_WEB_DEFAULT_TIMEOUT", 15)  # seconds for a whole request
+WEB_MAX_TIMEOUT = _env_int("NETADMIN_MCP_WEB_MAX_TIMEOUT", 60)
+WEB_MAX_REDIRECTS = _env_int("NETADMIN_MCP_WEB_MAX_REDIRECTS", 10)
+WEB_MAX_BYTES = _env_int("NETADMIN_MCP_WEB_MAX_BYTES", 5_000_000)       # 5 MB hard cap on downloaded body
+DEFAULT_USER_AGENT = os.getenv("NETADMIN_MCP_USER_AGENT") or "netadmin-mcp/1.0 (+curl)"
 ALLOWED_METHODS = {"GET", "HEAD", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"}
 ALLOWED_SCHEMES = {"http", "https"}
 

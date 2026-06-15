@@ -1,8 +1,8 @@
 {
   "mcpServers": {
-    "netcat": {
+    "netadmin": {
       "command": "python3",
-      "args": ["/ABSOLUTE/PATH/TO/netcat_mcp/server.py"]
+      "args": ["/ABSOLUTE/PATH/TO/netadmin_mcp/server.py"]
     }
   }
 }

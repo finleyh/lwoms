@@ -1,30 +1,29 @@
-# netcat-mcp
+# netadmin-mcp
 
-A small [MCP](https://modelcontextprotocol.io) server that profiles network hosts by shelling out to the `nc` (netcat) binary. Built for asset inventory, service profiling, and troubleshooting on hosts you own or are authorized to test.
+A small [MCP](https://modelcontextprotocol.io) server for network profiling and administration. It wraps **nmap** (structured scanning + OS detection), **curl** (HTTP fetch/scrape), and a **guarded bash runner** (for scripted admin tasks like driving the Asterisk Manager Interface over netcat). Built for asset inventory, service profiling, and troubleshooting on hosts you own or are authorized to test.
 
 ## Tools
 
 | Tool | What it does |
 |------|--------------|
-| `port_scan` | Probes a handful of well-known service ports (ssh, http, https, smb, mysql, redis, plus VoIP: SIP, Asterisk AMI, IAX2, SCCP, FreeSWITCH ESL, H.323) to profile a device. Not an exhaustive 65k sweep. |
-| `banner_grab` | Connects to `host:port` and captures the service banner. Sends a minimal safe probe for request-driven services (HTTP/Redis). |
-| `raw_send_recv` | Sends arbitrary text to `host:port` over TCP/UDP and returns the reply. A generic nc pipe for poking custom protocols. |
-| `os_fingerprint` | Best-effort OS guess from service banners + ICMP TTL. **Heuristic only** — true OS detection needs stack fingerprinting (`nmap -O`). |
+| `nmap_scan` | Scans a host with nmap and returns parsed JSON: open TCP ports, service/version (`-sV`), and an OS-family guess with accuracy (`-O`). Defaults to nmap's top 100 ports; pass `ports=[...]` or `top_ports=N`. Connect scan (`-sT`) works without root; `os_detect` needs root and warns if it can't run. |
 | `http_fetch` | Fetches a URL with curl and returns the raw HTTP response (status, headers, final URL, body). For scraping and API probing. |
 | `web_scrape` | Fetches a page with curl and extracts title, visible text, and absolutised links (scripts/styles stripped). Stdlib HTML parser, no extra deps. |
+| `bash_exec` | Runs an **allowlisted** bash command/pipeline and returns stdout, stderr, and exit code (own process group, timeout + output caps). The "leverage bash" tool — e.g. pipe `printf` payloads into `nc` to drive a line protocol like the Asterisk Manager Interface (AMI). Only allowlisted commands run; command substitution is rejected. |
 
 ## Requirements
 
 - Python 3.10+
-- The `nc` binary on `PATH` (OpenBSD or GNU netcat). On macOS it's preinstalled; on Debian/Ubuntu: `sudo apt install netcat-openbsd`.
+- The `nmap` binary on `PATH` (used by `nmap_scan`). Debian/Ubuntu: `sudo apt install nmap`; macOS: `brew install nmap`. OS detection (`-O`) and SYN scans need root.
 - The `curl` binary on `PATH` (used by `http_fetch` / `web_scrape`). Preinstalled on macOS and most Linux distros.
-- `ping` on `PATH` (optional — only used by `os_fingerprint` for the TTL hint).
+- `bash` on `PATH`, plus whatever binaries you allowlist for `bash_exec` (e.g. `nc` for AMI: `sudo apt install netcat-openbsd`).
 
 ## Project layout
 
-- `netcat.py` — netcat subprocess wrapper, validation, OS heuristics (no MCP dependency).
-- `curl.py` — curl subprocess wrapper + stdlib HTML parsing (no MCP dependency).
-- `tools.py` — the six MCP tool definitions; `register(mcp)` attaches them.
+- `nmap_engine.py` — nmap subprocess wrapper + XML→JSON parsing (no MCP dependency).
+- `curl_engine.py` — curl subprocess wrapper + stdlib HTML parsing (no MCP dependency).
+- `bash_engine.py` — guarded bash runner behind `bash_exec`: command allowlist, `bash -c` in its own process group, timeout + output caps (no MCP dependency).
+- `mcp_tools.py` — the four MCP tool definitions; `register(mcp)` attaches them.
 - `server.py` — entry point: loads `.env`, builds the FastMCP server, and runs it.
 - `requirements.txt` — pip dependency list (`mcp`, `python-dotenv`).
 - `pyproject.toml` — project metadata + dependencies for [uv](https://docs.astral.sh/uv/).
@@ -38,7 +37,7 @@ The Python dependencies are the `mcp` SDK and `python-dotenv` (see
 ### Recommended: venv + pip
 
 ```bash
-cd netcat-mcp
+cd netadmin-mcp
 python3 -m venv .venv          # create an isolated environment
 source .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
@@ -53,7 +52,7 @@ Claude Desktop at below.
 is uv-native. From the repo root:
 
 ```bash
-cd netcat-mcp
+cd netadmin-mcp
 uv sync                        # creates .venv and installs from pyproject.toml
 ```
 
@@ -79,7 +78,7 @@ uv run python server.py
 A normal start prints nothing and waits for an MCP client to connect over
 stdio — that's expected. You usually don't run it by hand; Claude Desktop
 launches it for you (next section). To do a quick self-check that it imports and
-registers all six tools:
+registers all four tools:
 
 ```bash
 python -c "import server, asyncio; print([t.name for t in asyncio.run(server.mcp.list_tools())])"
@@ -90,16 +89,16 @@ uv run python -c "import server, asyncio; print([t.name for t in asyncio.run(ser
 ## Connect to Claude Desktop
 
 1. Open **Settings → Developer → Edit Config** to open `claude_desktop_config.json`.
-2. Add the `netcat` server below, replacing the paths with **absolute** paths on
+2. Add the `netadmin` server below, replacing the paths with **absolute** paths on
    your machine. Point `command` at the Python inside the venv you created so the
    `mcp` package is found:
 
 ```json
 {
   "mcpServers": {
-    "netcat": {
-      "command": "/ABSOLUTE/PATH/TO/netcat-mcp/.venv/bin/python",
-      "args": ["/ABSOLUTE/PATH/TO/netcat-mcp/server.py"]
+    "netadmin": {
+      "command": "/ABSOLUTE/PATH/TO/netadmin-mcp/.venv/bin/python",
+      "args": ["/ABSOLUTE/PATH/TO/netadmin-mcp/server.py"]
     }
   }
 }
@@ -113,9 +112,9 @@ uv run python -c "import server, asyncio; print([t.name for t in asyncio.run(ser
 ```json
 {
   "mcpServers": {
-    "netcat": {
+    "netadmin": {
       "command": "uv",
-      "args": ["run", "--directory", "/ABSOLUTE/PATH/TO/netcat-mcp", "python", "server.py"]
+      "args": ["run", "--directory", "/ABSOLUTE/PATH/TO/netadmin-mcp", "python", "server.py"]
     }
   }
 }
@@ -124,10 +123,9 @@ uv run python -c "import server, asyncio; print([t.name for t in asyncio.run(ser
    This requires `uv` itself to be on the `PATH` of the shell that launches Claude
    Desktop (use the absolute path to the `uv` binary if it isn't).
 
-3. **Fully quit and reopen** Claude Desktop. The six tools (`port_scan`,
-   `banner_grab`, `raw_send_recv`, `os_fingerprint`, `http_fetch`, `web_scrape`)
-   then appear under the 🔌 / tools menu, and you can drive them with the example
-   prompts below.
+3. **Fully quit and reopen** Claude Desktop. The four tools (`nmap_scan`,
+   `http_fetch`, `web_scrape`, `bash_exec`) then appear under the 🔌 / tools
+   menu, and you can drive them with the example prompts below.
 
 ### Troubleshooting
 
@@ -135,41 +133,46 @@ uv run python -c "import server, asyncio; print([t.name for t in asyncio.run(ser
   venv Python. Use the full `.venv/bin/python` path, not bare `python3`.
 - **Tools don't appear:** make sure you fully quit Claude Desktop (not just closed
   the window) and that the JSON is valid (no trailing commas).
-- **`nc`/`curl` not found errors:** install them (see Requirements) and confirm
+- **`nmap`/`curl` not found errors:** install them (see Requirements) and confirm
   they're on the `PATH` of the shell that launches Claude Desktop.
+- **`bash_exec` says a command is blocked:** that's the allowlist. Add the binary
+  via `NETADMIN_MCP_ALLOWED_CMDS` (this replaces the default set, so list everything
+  you need).
+- **`nmap_scan` warns about root for OS detection:** `-O` needs raw sockets. Run
+  the server as root or skip `os_detect`.
 
 ## Connect to llmCLIent (mcpc)
 
 This server also works as a tool source for [llmCLIent](https://github.com/finleyh/llmCLIent),
 a CLI MCP client (`mcpc`) that plays the same host role Claude Desktop does. Because
-`netcat-mcp` speaks MCP over stdio, `mcpc` connects to it with `mcp add stdio` — no code
+`netadmin-mcp` speaks MCP over stdio, `mcpc` connects to it with `mcp add stdio` — no code
 changes on either side.
 
 Use **absolute** paths, and point the command at the venv Python you created in Setup so
 the `mcp` package resolves:
 
 ```
-mcpc> mcp add stdio netcat /ABSOLUTE/PATH/TO/netcat-mcp/.venv/bin/python /ABSOLUTE/PATH/TO/netcat-mcp/server.py
-mcpc> mcp connect netcat
+mcpc> mcp add stdio netadmin /ABSOLUTE/PATH/TO/netadmin-mcp/.venv/bin/python /ABSOLUTE/PATH/TO/netadmin-mcp/server.py
+mcpc> mcp connect netadmin
 mcpc> mcp tools
 mcpc> chat profile 192.168.1.10 — which common services are open?
 ```
 
 On Windows the command path is `...\.venv\Scripts\python.exe`. If you used uv instead of a
 venv, point the command at uv and run from the project directory:
-`mcp add stdio netcat uv run --directory /ABSOLUTE/PATH/TO/netcat-mcp python server.py`.
+`mcp add stdio netadmin uv run --directory /ABSOLUTE/PATH/TO/netadmin-mcp python server.py`.
 
-`mcp connect` spawns the server, initializes against it, and lists its tools. The six tools
-are then exposed to the remote LLM as `netcat__<tool>` functions (e.g. `netcat__port_scan`),
+`mcp connect` spawns the server, initializes against it, and lists its tools. The four tools
+are then exposed to the remote LLM as `netadmin__<tool>` functions (e.g. `netadmin__nmap_scan`),
 and `mcpc`'s tool-call loop dispatches them automatically — same as any other stdio server
 it hosts. The example prompts below work verbatim from the `mcpc> chat …` prompt.
 
 ## Example prompts
 
-- "Profile 192.168.1.10 — which common services are open?"
-- "Grab the SSH banner from 10.0.0.5 port 22."
-- "Send `INFO\r\n` to 127.0.0.1:6379 and show the reply."
-- "Take a guess at what OS 10.0.0.5 is running."
+- "Scan 192.168.1.10 — which services and versions are running?"
+- "Run nmap against 10.0.0.5 ports 22 and 5038 with version detection."
+- "Take a guess at what OS 10.0.0.5 is running." (needs root for `-O`)
+- "Log into the Asterisk AMI at 10.0.0.5:5038 with user/secret and run `database show`." (uses `bash_exec`)
 - "Scrape the title, text, and links from https://example.com."
 - "Fetch https://api.example.com/status and show me the JSON and headers."
 
@@ -187,25 +190,30 @@ variables take precedence over `.env` entries). The available variables:
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `NETCAT_MCP_NC_BIN` | (auto-detected) | Path to the `nc` binary |
-| `NETCAT_MCP_CURL_BIN` | (auto-detected) | Path to the `curl` binary |
-| `NETCAT_MCP_MAX_TIMEOUT` | `15` | Hard ceiling, seconds per nc connection |
-| `NETCAT_MCP_DEFAULT_TIMEOUT` | `4` | Default per-connection timeout, seconds |
-| `NETCAT_MCP_MAX_PAYLOAD_BYTES` | `8192` | Cap on `raw_send_recv` payload |
-| `NETCAT_MCP_MAX_RECV_BYTES` | `65536` | Cap on captured reply size |
-| `NETCAT_MCP_WEB_DEFAULT_TIMEOUT` | `15` | Default whole-request timeout, seconds |
-| `NETCAT_MCP_WEB_MAX_TIMEOUT` | `60` | Hard ceiling for web requests, seconds |
-| `NETCAT_MCP_WEB_MAX_REDIRECTS` | `10` | Max redirects to follow |
-| `NETCAT_MCP_WEB_MAX_BYTES` | `5000000` | Hard cap on downloaded body (5 MB) |
-| `NETCAT_MCP_USER_AGENT` | `netcat-mcp/1.0 (+curl)` | User-Agent for `http_fetch` / `web_scrape` |
+| `NETADMIN_MCP_NMAP_BIN` | (auto-detected) | Path to the `nmap` binary |
+| `NETADMIN_MCP_CURL_BIN` | (auto-detected) | Path to the `curl` binary |
+| `NETADMIN_MCP_BASH_BIN` | (auto-detected) | Path to the `bash` binary |
+| `NETADMIN_MCP_NMAP_MAX_TIMEOUT` | `300` | Hard ceiling, seconds per nmap run |
+| `NETADMIN_MCP_NMAP_DEFAULT_TIMEOUT` | `120` | Default nmap timeout, seconds |
+| `NETADMIN_MCP_NMAP_TOP_PORTS` | `100` | Default `--top-ports` when no ports given |
+| `NETADMIN_MCP_WEB_DEFAULT_TIMEOUT` | `15` | Default whole-request timeout, seconds |
+| `NETADMIN_MCP_WEB_MAX_TIMEOUT` | `60` | Hard ceiling for web requests, seconds |
+| `NETADMIN_MCP_WEB_MAX_REDIRECTS` | `10` | Max redirects to follow |
+| `NETADMIN_MCP_WEB_MAX_BYTES` | `5000000` | Hard cap on downloaded body (5 MB) |
+| `NETADMIN_MCP_USER_AGENT` | `netadmin-mcp/1.0 (+curl)` | User-Agent for `http_fetch` / `web_scrape` |
+| `NETADMIN_MCP_BASH_MAX_TIMEOUT` | `120` | Hard ceiling, seconds per `bash_exec` run |
+| `NETADMIN_MCP_BASH_DEFAULT_TIMEOUT` | `30` | Default `bash_exec` wall-clock timeout, seconds |
+| `NETADMIN_MCP_BASH_MAX_OUTPUT_BYTES` | `262144` | Cap on captured `bash_exec` stdout/stderr (256 KB) |
+| `NETADMIN_MCP_ALLOWED_CMDS` | (built-in set) | Space/comma list of allowed `bash_exec` commands. **Replaces** the default. |
+| `NETADMIN_MCP_BASH_ALLOWLIST_DISABLED` | `0` | Set truthy to disable the allowlist (isolated envs only) |
 
 `.env` is git-ignored; `.env.example` is the committed template.
 
 ## Safety & limits
 
-- Per-connection timeout is capped at **15s**; `raw_send_recv` payloads are capped at **8 KB**; replies are truncated at **64 KB**.
-- `port_scan` only touches the small well-known-service list — it will never become a wide, aggressive sweep.
-- Hosts and ports are validated before any command runs; arguments are passed to `nc` as an argv list (no shell), so there is no shell-injection surface.
+- `nmap_scan` runs nmap as an **argv list** (no shell); hosts are validated and ports are ints, so there is no shell-injection surface. It defaults to nmap's top 100 ports and a connect scan — not a full 65k SYN sweep — and is bounded by a timeout (default 120s, ceiling 300s).
+- **`bash_exec` is a deliberate shell**, guarded by a **command allowlist**: every invoked binary must be on the list (default: `nmap`, `nc`, `ping`, `dig`, `curl`, `printf`, `sleep`, `cat`, `grep`, …) and command substitution (`$(...)`, backticks) is rejected. It runs through `bash -c` in its own process group, bounded by a timeout (default 30s, ceiling 120s) with stdout/stderr capped at 256 KB.
+- The allowlist is a **guard rail, not a sandbox.** For real isolation, run this server as an unprivileged user inside a container. Only enable it where running shell commands is acceptable, and target only hosts you are authorized to administer.
 
 ## Responsible use
 
