@@ -1,0 +1,10 @@
+# keep the build context tiny and free of host cruft
+.venv/
+venv/
+__pycache__/
+*.pyc
+.git/
+.gitignore
+*.md
+claude_desktop_config.example.json
+.DS_Store
