@@ -11,22 +11,41 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import os
 import re
 import shutil
 from dataclasses import dataclass, field
 from typing import Optional
 
+
+def _env_int(name: str, default: int) -> int:
+    """Read an int from the environment, falling back to ``default``.
+
+    Empty or malformed values are ignored so a stray ``FOO=`` can't crash boot.
+    """
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
 # --------------------------------------------------------------------------- #
 # Configuration / safety limits
 # --------------------------------------------------------------------------- #
+# Every knob below is overridable via an environment variable (or .env entry),
+# so deployments can tighten/loosen limits without editing code. Defaults match
+# the original hard-coded values.
 
-NC_BIN = shutil.which("nc") or "nc"
+NC_BIN = os.getenv("NETCAT_MCP_NC_BIN") or shutil.which("nc") or "nc"
 
 # Hard ceilings so a single tool call can never become an aggressive scan.
-MAX_TIMEOUT = 15          # seconds per nc connection
-DEFAULT_TIMEOUT = 4
-MAX_PAYLOAD_BYTES = 8192  # cap on raw_send_recv payload
-MAX_RECV_BYTES = 65536    # cap on captured reply size
+MAX_TIMEOUT = _env_int("NETCAT_MCP_MAX_TIMEOUT", 15)              # seconds per nc connection
+DEFAULT_TIMEOUT = _env_int("NETCAT_MCP_DEFAULT_TIMEOUT", 4)
+MAX_PAYLOAD_BYTES = _env_int("NETCAT_MCP_MAX_PAYLOAD_BYTES", 8192)  # cap on raw_send_recv payload
+MAX_RECV_BYTES = _env_int("NETCAT_MCP_MAX_RECV_BYTES", 65536)       # cap on captured reply size
 
 # Well-known services used to *profile* a host. Deliberately small.
 # Includes common VoIP / telephony control ports (SIP, Asterisk AMI, IAX2,

@@ -10,6 +10,7 @@ tool definitions that use these live in ``tools.py``.
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import shutil
 from dataclasses import dataclass, field
@@ -17,17 +18,31 @@ from html.parser import HTMLParser
 from typing import Optional
 from urllib.parse import urljoin, urlparse
 
+
+def _env_int(name: str, default: int) -> int:
+    """Read an int from the environment, falling back to ``default``."""
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
 # --------------------------------------------------------------------------- #
 # Configuration / safety limits
 # --------------------------------------------------------------------------- #
+# Overridable via environment variables (or .env). Defaults match the original
+# hard-coded values.
 
-CURL_BIN = shutil.which("curl") or "curl"
+CURL_BIN = os.getenv("NETCAT_MCP_CURL_BIN") or shutil.which("curl") or "curl"
 
-WEB_DEFAULT_TIMEOUT = 15       # seconds for a whole request
-WEB_MAX_TIMEOUT = 60
-WEB_MAX_REDIRECTS = 10
-WEB_MAX_BYTES = 5_000_000      # 5 MB hard cap on downloaded body
-DEFAULT_USER_AGENT = "netcat-mcp/1.0 (+curl)"
+WEB_DEFAULT_TIMEOUT = _env_int("NETCAT_MCP_WEB_DEFAULT_TIMEOUT", 15)  # seconds for a whole request
+WEB_MAX_TIMEOUT = _env_int("NETCAT_MCP_WEB_MAX_TIMEOUT", 60)
+WEB_MAX_REDIRECTS = _env_int("NETCAT_MCP_WEB_MAX_REDIRECTS", 10)
+WEB_MAX_BYTES = _env_int("NETCAT_MCP_WEB_MAX_BYTES", 5_000_000)       # 5 MB hard cap on downloaded body
+DEFAULT_USER_AGENT = os.getenv("NETCAT_MCP_USER_AGENT") or "netcat-mcp/1.0 (+curl)"
 ALLOWED_METHODS = {"GET", "HEAD", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"}
 ALLOWED_SCHEMES = {"http", "https"}
 

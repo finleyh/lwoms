@@ -1,0 +1,26 @@
+[project]
+name = "netcat-mcp"
+version = "1.0.0"
+description = "A small MCP server that profiles network hosts via the nc (netcat) and curl binaries."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "mcp>=1.2.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.scripts]
+netcat-mcp = "server:main"
+
+[tool.uv]
+# Nothing fancy — this project has no dev-only deps yet. Add a [dependency-groups]
+# table here later if you want lint/test tooling that doesn't ship with the server.
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+# Flat layout: the modules live at the repo root, not under a package dir.
+include = ["server.py", "tools.py", "netcat.py", "curl.py"]

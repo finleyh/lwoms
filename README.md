@@ -25,20 +25,20 @@ A small [MCP](https://modelcontextprotocol.io) server that profiles network host
 - `netcat.py` — netcat subprocess wrapper, validation, OS heuristics (no MCP dependency).
 - `curl.py` — curl subprocess wrapper + stdlib HTML parsing (no MCP dependency).
 - `tools.py` — the six MCP tool definitions; `register(mcp)` attaches them.
-- `server.py` — entry point: builds the FastMCP server and runs it.
+- `server.py` — entry point: loads `.env`, builds the FastMCP server, and runs it.
+- `requirements.txt` — pip dependency list (`mcp`, `python-dotenv`).
+- `pyproject.toml` — project metadata + dependencies for [uv](https://docs.astral.sh/uv/).
+- `.env.example` — template for the optional environment-variable overrides (see [Configuration](#configuration)).
 
 ## Setup
 
-The only Python dependency is the `mcp` SDK (see `requirements.txt`). The
-**recommended** path is a standard `venv` — it ships with Python, needs nothing
-extra, and keeps this project isolated from your system packages. If you already
-use [uv](https://docs.astral.sh/uv/), that works too and is shown below as an
-alternative.
+The Python dependencies are the `mcp` SDK and `python-dotenv` (see
+`requirements.txt` / `pyproject.toml`). Two equivalent paths — pick one:
 
 ### Recommended: venv + pip
 
 ```bash
-cd netcat_mcp
+cd netcat-mcp
 python3 -m venv .venv          # create an isolated environment
 source .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
@@ -49,21 +49,31 @@ Claude Desktop at below.
 
 ### Alternative: uv
 
+[uv](https://docs.astral.sh/uv/) reads `pyproject.toml` directly, so the project
+is uv-native. From the repo root:
+
 ```bash
-cd netcat_mcp
-uv venv                        # creates .venv
-uv pip install -r requirements.txt
+cd netcat-mcp
+uv sync                        # creates .venv and installs from pyproject.toml
 ```
 
-(Or, if you prefer uv's ad-hoc runner with no activation step:
-`uv run --with mcp python server.py`.)
+`uv sync` resolves and installs everything into `.venv` (writing a `uv.lock`),
+and `uv run` below uses that environment automatically — no `source activate`
+step needed. If you'd rather drive it from `requirements.txt`, `uv venv && uv pip
+install -r requirements.txt` works too.
 
 ## Run
 
-With the environment active:
+With a venv active:
 
 ```bash
 python server.py        # serves over stdio; Ctrl-C to stop
+```
+
+Or with uv (no activation needed — it uses the `.venv` from `uv sync`):
+
+```bash
+uv run python server.py
 ```
 
 A normal start prints nothing and waits for an MCP client to connect over
@@ -73,6 +83,8 @@ registers all six tools:
 
 ```bash
 python -c "import server, asyncio; print([t.name for t in asyncio.run(server.mcp.list_tools())])"
+# uv equivalent:
+uv run python -c "import server, asyncio; print([t.name for t in asyncio.run(server.mcp.list_tools())])"
 ```
 
 ## Connect to Claude Desktop
@@ -86,16 +98,31 @@ python -c "import server, asyncio; print([t.name for t in asyncio.run(server.mcp
 {
   "mcpServers": {
     "netcat": {
-      "command": "/ABSOLUTE/PATH/TO/netcat_mcp/.venv/bin/python",
-      "args": ["/ABSOLUTE/PATH/TO/netcat_mcp/server.py"]
+      "command": "/ABSOLUTE/PATH/TO/netcat-mcp/.venv/bin/python",
+      "args": ["/ABSOLUTE/PATH/TO/netcat-mcp/server.py"]
     }
   }
 }
 ```
 
-   On Windows the command path is `...\.venv\Scripts\python.exe`. If you used uv,
-   point `command` at uv instead, e.g.
-   `"command": "uv"`, `"args": ["run", "--with", "mcp", "python", "/ABSOLUTE/PATH/TO/netcat_mcp/server.py"]`.
+   On Windows the command path is `...\.venv\Scripts\python.exe`.
+
+   **If you used uv**, point `command` at uv and let it run the project from its
+   directory (it picks up the `.venv` created by `uv sync`):
+
+```json
+{
+  "mcpServers": {
+    "netcat": {
+      "command": "uv",
+      "args": ["run", "--directory", "/ABSOLUTE/PATH/TO/netcat-mcp", "python", "server.py"]
+    }
+  }
+}
+```
+
+   This requires `uv` itself to be on the `PATH` of the shell that launches Claude
+   Desktop (use the absolute path to the `uv` binary if it isn't).
 
 3. **Fully quit and reopen** Claude Desktop. The six tools (`port_scan`,
    `banner_grab`, `raw_send_recv`, `os_fingerprint`, `http_fetch`, `web_scrape`)
@@ -122,14 +149,15 @@ Use **absolute** paths, and point the command at the venv Python you created in 
 the `mcp` package resolves:
 
 ```
-mcpc> mcp add stdio netcat /ABSOLUTE/PATH/TO/netcat_mcp/.venv/bin/python /ABSOLUTE/PATH/TO/netcat_mcp/server.py
+mcpc> mcp add stdio netcat /ABSOLUTE/PATH/TO/netcat-mcp/.venv/bin/python /ABSOLUTE/PATH/TO/netcat-mcp/server.py
 mcpc> mcp connect netcat
 mcpc> mcp tools
 mcpc> chat profile 192.168.1.10 — which common services are open?
 ```
 
 On Windows the command path is `...\.venv\Scripts\python.exe`. If you used uv instead of a
-venv, point the command at uv: `mcp add stdio netcat uv run --with mcp python /ABSOLUTE/PATH/TO/netcat_mcp/server.py`.
+venv, point the command at uv and run from the project directory:
+`mcp add stdio netcat uv run --directory /ABSOLUTE/PATH/TO/netcat-mcp python server.py`.
 
 `mcp connect` spawns the server, initializes against it, and lists its tools. The six tools
 are then exposed to the remote LLM as `netcat__<tool>` functions (e.g. `netcat__port_scan`),
@@ -144,6 +172,34 @@ it hosts. The example prompts below work verbatim from the `mcpc> chat …` prom
 - "Take a guess at what OS 10.0.0.5 is running."
 - "Scrape the title, text, and links from https://example.com."
 - "Fetch https://api.example.com/status and show me the JSON and headers."
+
+## Configuration
+
+Every tunable is optional — the server boots with sane defaults and **no `.env`
+required**. To override them, copy the template and edit:
+
+```bash
+cp .env.example .env
+```
+
+`server.py` loads `.env` automatically on startup (real shell environment
+variables take precedence over `.env` entries). The available variables:
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `NETCAT_MCP_NC_BIN` | (auto-detected) | Path to the `nc` binary |
+| `NETCAT_MCP_CURL_BIN` | (auto-detected) | Path to the `curl` binary |
+| `NETCAT_MCP_MAX_TIMEOUT` | `15` | Hard ceiling, seconds per nc connection |
+| `NETCAT_MCP_DEFAULT_TIMEOUT` | `4` | Default per-connection timeout, seconds |
+| `NETCAT_MCP_MAX_PAYLOAD_BYTES` | `8192` | Cap on `raw_send_recv` payload |
+| `NETCAT_MCP_MAX_RECV_BYTES` | `65536` | Cap on captured reply size |
+| `NETCAT_MCP_WEB_DEFAULT_TIMEOUT` | `15` | Default whole-request timeout, seconds |
+| `NETCAT_MCP_WEB_MAX_TIMEOUT` | `60` | Hard ceiling for web requests, seconds |
+| `NETCAT_MCP_WEB_MAX_REDIRECTS` | `10` | Max redirects to follow |
+| `NETCAT_MCP_WEB_MAX_BYTES` | `5000000` | Hard cap on downloaded body (5 MB) |
+| `NETCAT_MCP_USER_AGENT` | `netcat-mcp/1.0 (+curl)` | User-Agent for `http_fetch` / `web_scrape` |
+
+`.env` is git-ignored; `.env.example` is the committed template.
 
 ## Safety & limits
 

@@ -20,6 +20,13 @@ scan breadth and enforces per-connection timeouts to stay non-aggressive.
 
 from __future__ import annotations
 
+from dotenv import load_dotenv
+
+# Load .env (if present) BEFORE importing tools/netcat/curl, so their
+# module-level config constants pick up any overrides. Real environment
+# variables always win over .env values.
+load_dotenv(override=False)
+
 from mcp.server.fastmcp import FastMCP
 
 import tools
@@ -28,5 +35,10 @@ mcp = FastMCP("netcat-mcp")
 tools.register(mcp)
 
 
-if __name__ == "__main__":
+def main() -> None:
+    """Console-script entry point (`netcat-mcp`) and `python server.py`."""
     mcp.run()
+
+
+if __name__ == "__main__":
+    main()
