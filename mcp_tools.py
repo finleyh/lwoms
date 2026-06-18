@@ -30,8 +30,6 @@ may be illegal.
 
 from __future__ import annotations
 
-from typing import Optional
-
 import telnet_engine
 from telnet_engine import (
     CONNECT_DEFAULT_TIMEOUT,
@@ -243,8 +241,8 @@ async def telnet_close(session_id: str) -> dict:
 
 async def nmap_scan(
     host: str,
-    ports: Optional[list] = None,
-    top_ports: Optional[int] = None,
+    ports: list[int] = [],
+    top_ports: int = 0,
     service_detect: bool = True,
     os_detect: bool = False,
     skip_ping: bool = False,
@@ -270,7 +268,9 @@ async def nmap_scan(
     Args:
         host: target hostname or IP address.
         ports: explicit ports to scan, e.g. [22, 23, 80]. Overrides top_ports.
+            Leave empty ([]) to use top_ports / nmap's default.
         top_ports: scan nmap's N most common ports instead of a fixed list.
+            0 means "unset" (use the default).
         service_detect: run service/version detection (-sV). Default True.
         os_detect: attempt OS fingerprinting (-O). Needs root. Default False.
         skip_ping: treat the host as up and skip host discovery (-Pn). Useful
@@ -284,8 +284,8 @@ async def nmap_scan(
     """
     return await nmap_engine.scan(
         host,
-        ports=ports,
-        top_ports=top_ports,
+        ports=ports or None,        # [] -> None (use top_ports / default)
+        top_ports=top_ports or None,  # 0 -> None (unset)
         service_detect=service_detect,
         os_detect=os_detect,
         skip_ping=skip_ping,
@@ -299,8 +299,8 @@ async def nmap_scan(
 async def http_fetch(
     url: str,
     method: str = "GET",
-    headers: Optional[dict] = None,
-    data: Optional[str] = None,
+    headers: dict[str, str] = {},
+    data: str = "",
     timeout: float = WEB_DEFAULT_TIMEOUT,
     follow_redirects: bool = True,
     max_bytes: int = WEB_MAX_BYTES,
@@ -317,8 +317,9 @@ async def http_fetch(
     Args:
         url: http(s) URL to fetch.
         method: HTTP method (GET, HEAD, POST, PUT, DELETE, PATCH, OPTIONS).
-        headers: optional dict of request headers, e.g. {"Authorization": "..."}.
-        data: optional request body (for POST/PUT/PATCH).
+        headers: dict of request headers, e.g. {"Authorization": "..."}. Empty
+            ({}) sends no extra headers.
+        data: request body (for POST/PUT/PATCH). Empty ("") sends no body.
         timeout: total request timeout in seconds (1–60).
         follow_redirects: follow 3xx redirects (up to 10 hops).
         max_bytes: cap on downloaded body size (≤ 5 MB).
@@ -331,8 +332,8 @@ async def http_fetch(
     res = await run_curl(
         url,
         method=method,
-        headers=headers,
-        data=data,
+        headers=headers or None,  # {} -> None (no extra headers)
+        data=data or None,        # "" -> None (no body)
         timeout=timeout,
         follow_redirects=follow_redirects,
         max_bytes=max_bytes,
