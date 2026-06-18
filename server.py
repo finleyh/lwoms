@@ -17,11 +17,15 @@ Exposed tools:
   - nmap_scan            : structured nmap scan — open ports, service/version, OS
   - http_fetch           : fetch a URL with curl and return the raw HTTP response
   - web_scrape           : fetch a page with curl and extract title, text, links
+  - public_ipv4          : get this machine's public IPv4 address via icanhazip
+  - dns_reverse_lookup   : reverse-DNS (PTR) for an IP — reveals the operator
+  - dns_lookup           : forward DNS lookup for a domain (A/AAAA/MX/NS/TXT/…)
 
 Modules:
   - telnet_engine.py     : zero-dependency asyncio telnet client + session registry
   - nmap_engine.py       : nmap subprocess wrapper + XML→JSON parsing
   - curl_engine.py       : curl subprocess wrapper + stdlib HTML parsing
+  - dns_engine.py        : dig subprocess wrapper + answer-section parsing
   - mcp_tools.py         : the MCP tool definitions; register(mcp) attaches them
 
 Transports

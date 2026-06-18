@@ -19,4 +19,4 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 # Flat layout: the modules live at the repo root, not under a package dir.
-include = ["server.py", "mcp_tools.py", "telnet_engine.py", "nmap_engine.py", "curl_engine.py"]
+include = ["server.py", "mcp_tools.py", "telnet_engine.py", "nmap_engine.py", "curl_engine.py", "dns_engine.py"]

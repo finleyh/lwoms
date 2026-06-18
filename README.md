@@ -6,8 +6,9 @@ discover what's listening on a host and probe it. The telnet client has zero
 third-party dependency — it speaks just enough of the telnet protocol itself over
 a plain `asyncio` TCP stream (Python's built-in `telnetlib` was removed in 3.13).
 
-> **Requirements:** the recon tools shell out to `nmap` and `curl`, so both must
-> be installed and on `PATH` on the machine running the server.
+> **Requirements:** the recon tools shell out to `nmap`, `curl`, and `dig`
+> (`dig` is in the `dnsutils` / `bind-tools` package), so all three must be
+> installed and on `PATH` on the machine running the server.
 
 ## Quick start
 
@@ -47,6 +48,9 @@ Then open `http://localhost:8000/docs`.
 | `nmap_scan(host, ports=None, top_ports=None, service_detect=True, os_detect=False, skip_ping=False)` | Structured nmap scan → open ports, service/version, OS guess (parsed to JSON). |
 | `http_fetch(url, method="GET", headers=None, data=None, ...)` | Fetch a URL with curl; returns status, headers, final URL, and body. |
 | `web_scrape(url, max_links=100, max_text_chars=20000)` | Fetch a page and extract title, visible text, and absolutised links. |
+| `public_ipv4(timeout=15)` | Return this machine's public IPv4 address via `ipv4.icanhazip.com`. |
+| `dns_reverse_lookup(ip, server="", timeout=10)` | Reverse DNS (PTR) for an IP — the hostname often names the hosting/telco/VPN operator. |
+| `dns_lookup(domain, record_type="A", server="", timeout=10)` | Forward DNS lookup for a domain (A, AAAA, MX, NS, TXT, CNAME, SOA, …). |
 
 ## Example flows
 

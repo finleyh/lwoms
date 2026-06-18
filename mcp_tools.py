@@ -30,6 +30,8 @@ may be illegal.
 
 from __future__ import annotations
 
+import ipaddress
+
 import telnet_engine
 from telnet_engine import (
     CONNECT_DEFAULT_TIMEOUT,
@@ -43,6 +45,8 @@ from telnet_engine import (
 
 import nmap_engine
 from nmap_engine import NMAP_DEFAULT_TIMEOUT
+import dns_engine
+from dns_engine import DNS_DEFAULT_TIMEOUT, DnsError
 from curl_engine import (
     WEB_DEFAULT_TIMEOUT,
     WEB_MAX_BYTES,
@@ -423,6 +427,120 @@ async def web_scrape(
     }
 
 
+# ── Recon: public IP discovery ───────────────────────────────────────────────
+
+# ipv4.icanhazip.com resolves to IPv4-only, so the request always reports the
+# caller's public IPv4 address (not an IPv6 one).
+ICANHAZIP_IPV4_URL = "https://ipv4.icanhazip.com"
+
+
+async def public_ipv4(timeout: float = WEB_DEFAULT_TIMEOUT) -> dict:
+    """
+    Get this machine's public IPv4 address via icanhazip.
+
+    Makes an outbound request to ``https://ipv4.icanhazip.com`` (an IPv4-only
+    host) and returns the public IPv4 address the internet sees for the machine
+    running this server — i.e. the egress/NAT address, which may differ from any
+    local interface address. Useful as a recon starting point.
+
+    Args:
+        timeout: total request timeout in seconds (1–60).
+
+    Returns:
+        dict with ``ok`` and ``ip`` (the validated IPv4 string) and ``source`` —
+        or ``ok: false`` with an ``error`` if the request failed or the response
+        wasn't a valid IPv4 address.
+    """
+    res = await run_curl(ICANHAZIP_IPV4_URL, timeout=timeout, follow_redirects=True)
+    if not res.ok and res.status == 0:
+        return {
+            "ok": False,
+            "source": ICANHAZIP_IPV4_URL,
+            "error": res.error or "request failed",
+            "timed_out": res.timed_out,
+        }
+
+    text = decode_body(res.body, res.content_type).strip()
+    try:
+        ip = str(ipaddress.IPv4Address(text))
+    except ValueError:
+        return {
+            "ok": False,
+            "source": ICANHAZIP_IPV4_URL,
+            "status": res.status,
+            "error": f"response was not a valid IPv4 address: {text!r}",
+        }
+
+    return {"ok": True, "ip": ip, "source": ICANHAZIP_IPV4_URL, "status": res.status}
+
+
+# ── Recon: DNS lookups (dig) ─────────────────────────────────────────────────
+
+
+async def dns_reverse_lookup(
+    ip: str,
+    server: str = "",
+    timeout: float = DNS_DEFAULT_TIMEOUT,
+) -> dict:
+    """
+    Reverse-DNS (PTR) lookup for an IP address.
+
+    Resolves an IP back to its hostname(s) via the PTR record. This is the go-to
+    check for attributing an address: the PTR hostname very often names the
+    operator — e.g. ``*.amazonaws.com``, ``*.comcast.net``, or a VPN provider's
+    domain — which helps you tell a hosting/VPN IP from a residential/telco one.
+    Pair it with `dns_lookup` on the resulting domain (NS/SOA/MX) to confirm.
+
+    Args:
+        ip: IPv4 or IPv6 address to look up.
+        server: optional DNS server IP to query (e.g. "8.8.8.8"); empty uses the
+            system resolver.
+        timeout: query timeout in seconds (1–60).
+
+    Returns:
+        dict with ``ok``, ``ip``, ``ptr_names`` (the hostnames), and the full
+        parsed ``records`` — or ``ok: false`` with an ``error``.
+    """
+    try:
+        return await dns_engine.reverse(ip, server=server, timeout=timeout)
+    except DnsError as e:
+        return {"ok": False, "ip": ip, "error": str(e)}
+
+
+async def dns_lookup(
+    domain: str,
+    record_type: str = "A",
+    server: str = "",
+    timeout: float = DNS_DEFAULT_TIMEOUT,
+) -> dict:
+    """
+    Forward DNS lookup: resolve a domain to records of a given type.
+
+    Queries ``dig`` for the requested record type and returns the parsed answer
+    section. Useful for mapping a domain's infrastructure during recon — A/AAAA
+    for addresses, MX for mail, NS/SOA for the authoritative operator, TXT for
+    SPF/verification, CNAME for aliases.
+
+    Args:
+        domain: the domain/hostname to resolve (e.g. "example.com").
+        record_type: record type to query — one of A, AAAA, MX, NS, TXT, CNAME,
+            SOA, PTR, SRV, CAA, DS, DNSKEY, NAPTR, ANY. Default "A".
+        server: optional DNS server IP to query (e.g. "1.1.1.1"); empty uses the
+            system resolver.
+        timeout: query timeout in seconds (1–60).
+
+    Returns:
+        dict with ``ok``, ``query``, ``type``, ``record_count``, and ``records``
+        (each with name/ttl/class/type/data) — or ``ok: false`` with an ``error``.
+    """
+    try:
+        return await dns_engine.lookup(
+            domain, record_type, server=server, timeout=timeout
+        )
+    except DnsError as e:
+        return {"ok": False, "query": domain, "type": record_type, "error": str(e)}
+
+
 # All tools exposed by this server, in registration order.
 ALL_TOOLS = [
     telnet_connect,
@@ -434,6 +552,9 @@ ALL_TOOLS = [
     nmap_scan,
     http_fetch,
     web_scrape,
+    public_ipv4,
+    dns_reverse_lookup,
+    dns_lookup,
 ]
 
 
