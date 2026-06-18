@@ -2,20 +2,46 @@
 """
 mcp_tools.py — the MCP tool definitions exposed by this server.
 
-This is the MCP-facing layer. Each tool is a plain async function that wraps one
-of the engine modules and shapes its result for the client. ``register(mcp)``
-attaches them to a FastMCP instance, keeping the tool definitions decoupled from
-server construction/transport (see ``server.py``).
+This is the MCP-facing layer. Each tool is a thin async wrapper around the
+``telnet_engine`` and shapes the result for the client. ``register(mcp)``
+attaches every tool to a FastMCP instance, keeping the tool definitions
+decoupled from server construction/transport (see ``server.py``).
 
-Engines used:
-  * nmap_engine — structured nmap scan / OS detection (`nmap_scan`)
-  * curl_engine — HTTP fetching + HTML scraping (`http_fetch`, `web_scrape`)
-  * bash_engine — guarded bash command runner (`bash_exec`)
+Telnet — a *persistent session* model:
+
+    telnet_connect(host, port)  -> session_id (+ optional banner)
+    telnet_send(session_id, "...")            # write a line
+    telnet_read(session_id)                   # read what came back
+    telnet_send_command(session_id, "...")    # send + read in one call
+    telnet_list()                             # list live sessions
+    telnet_close(session_id)                  # hang up
+
+Recon — stateless tools for port/service discovery and HTTP probing:
+
+    nmap_scan(host)             # structured nmap scan: open ports, services, OS
+    http_fetch(url)             # raw HTTP response via curl
+    web_scrape(url)             # title / text / links extracted from a page
+
+Telnet is plaintext and unauthenticated at the transport level, and nmap/curl
+reach out to whatever host you name — only point these at hosts you own or are
+explicitly authorized to access. Scanning third-party hosts without permission
+may be illegal.
 """
 
 from __future__ import annotations
 
 from typing import Optional
+
+import telnet_engine
+from telnet_engine import (
+    CONNECT_DEFAULT_TIMEOUT,
+    DEFAULT_PORT,
+    READ_DEFAULT_IDLE,
+    READ_DEFAULT_MAX_BYTES,
+    READ_DEFAULT_MAX_WAIT,
+    SessionNotFound,
+    TelnetError,
+)
 
 import nmap_engine
 from nmap_engine import NMAP_DEFAULT_TIMEOUT
@@ -27,11 +53,192 @@ from curl_engine import (
     run_curl,
     validate_url,
 )
-from bash_engine import (
-    BASH_DEFAULT_TIMEOUT,
-    CommandNotAllowed,
-    run_bash,
-)
+
+
+async def telnet_connect(
+    host: str,
+    port: int = DEFAULT_PORT,
+    timeout: float = CONNECT_DEFAULT_TIMEOUT,
+    read_banner: bool = True,
+) -> dict:
+    """
+    Open a telnet connection to a host and return a reusable session id.
+
+    Opens a TCP telnet connection and keeps it alive as a persistent session.
+    Use the returned ``session_id`` with `telnet_send`, `telnet_read`,
+    `telnet_send_command`, and `telnet_close`. Telnet option negotiation is
+    handled automatically (the client refuses all options and stays in plain
+    line mode).
+
+    Args:
+        host: target hostname or IP address.
+        port: TCP port to connect to (default 23).
+        timeout: seconds to wait for the connection to establish (1–120).
+        read_banner: if True, capture whatever the host sends on connect (login
+            prompt, MOTD) and return it as ``banner``.
+
+    Returns:
+        dict with ``ok``, ``session_id``, ``host``, ``port``, ``peer`` and, when
+        ``read_banner`` is set, the initial ``banner`` text.
+
+    Only connect to hosts you own or are explicitly authorized to access.
+    """
+    try:
+        res = await telnet_engine.connect(
+            host, port, timeout=timeout, read_banner=read_banner
+        )
+    except TelnetError as e:
+        return {"ok": False, "host": host, "port": port, "error": str(e)}
+    res["ok"] = True
+    return res
+
+
+async def telnet_send(
+    session_id: str,
+    data: str,
+    append_newline: bool = True,
+    newline: str = "\r\n",
+) -> dict:
+    """
+    Send text to an open telnet session without waiting for the reply.
+
+    Writes ``data`` to the session and returns immediately. Call `telnet_read`
+    afterwards to collect the response, or use `telnet_send_command` to do both
+    in one step.
+
+    Args:
+        session_id: id returned by `telnet_connect`.
+        data: text to send (e.g. a username, password, or command line).
+        append_newline: append ``newline`` to the data so the remote acts on the
+            line. Set False to send a raw fragment (e.g. a single keystroke).
+        newline: line terminator to append; telnet convention is CRLF ("\\r\\n").
+
+    Returns:
+        dict with ``ok`` and ``bytes_sent`` — or ``ok: false`` with an error if
+        the session id is unknown or the write failed.
+    """
+    try:
+        return await telnet_engine.send(
+            session_id, data, append_newline=append_newline, newline=newline
+        )
+    except SessionNotFound as e:
+        return {"ok": False, "session_id": session_id, "error": str(e)}
+    except TelnetError as e:
+        return {"ok": False, "session_id": session_id, "error": str(e)}
+
+
+async def telnet_read(
+    session_id: str,
+    idle_timeout: float = READ_DEFAULT_IDLE,
+    max_wait: float = READ_DEFAULT_MAX_WAIT,
+    max_bytes: int = READ_DEFAULT_MAX_BYTES,
+) -> dict:
+    """
+    Read output from an open telnet session until the stream goes quiet.
+
+    Telnet has no message boundaries, so reads are idle-based: this collects
+    output and returns once the connection has been silent for ``idle_timeout``
+    seconds, or the ``max_wait`` ceiling is hit, or ``max_bytes`` is reached, or
+    the peer closes the connection. Tune ``idle_timeout`` up for slow hosts.
+
+    Args:
+        session_id: id returned by `telnet_connect`.
+        idle_timeout: quiet period in seconds that ends the read (0.05–60).
+        max_wait: hard ceiling in seconds on the whole read (0.1–300).
+        max_bytes: stop after collecting this many bytes (≤ 8 MB).
+
+    Returns:
+        dict with ``ok``, ``data`` (decoded text), ``bytes``, ``eof`` (True if
+        the peer hung up), and ``truncated``.
+    """
+    try:
+        return await telnet_engine.read(
+            session_id,
+            idle_timeout=idle_timeout,
+            max_wait=max_wait,
+            max_bytes=max_bytes,
+        )
+    except SessionNotFound as e:
+        return {"ok": False, "session_id": session_id, "error": str(e)}
+    except TelnetError as e:
+        return {"ok": False, "session_id": session_id, "error": str(e)}
+
+
+async def telnet_send_command(
+    session_id: str,
+    command: str,
+    append_newline: bool = True,
+    newline: str = "\r\n",
+    idle_timeout: float = READ_DEFAULT_IDLE,
+    max_wait: float = READ_DEFAULT_MAX_WAIT,
+    max_bytes: int = READ_DEFAULT_MAX_BYTES,
+) -> dict:
+    """
+    Send a command to a telnet session and read the response in one call.
+
+    The convenient default for prompt-driven interaction: it writes ``command``
+    (with a trailing newline) and then reads until the host goes quiet. Equivalent
+    to `telnet_send` followed by `telnet_read` against the same session.
+
+    Args:
+        session_id: id returned by `telnet_connect`.
+        command: command line to send.
+        append_newline: append ``newline`` so the host runs the command.
+        newline: line terminator to append (default CRLF).
+        idle_timeout: quiet period in seconds that ends the read (0.05–60).
+        max_wait: hard ceiling in seconds on the read (0.1–300).
+        max_bytes: cap on bytes returned (≤ 8 MB).
+
+    Returns:
+        dict with ``ok``, ``data`` (the response text), ``bytes``, ``bytes_sent``,
+        ``eof``, and ``truncated``.
+    """
+    try:
+        return await telnet_engine.send_and_read(
+            session_id,
+            command,
+            append_newline=append_newline,
+            newline=newline,
+            idle_timeout=idle_timeout,
+            max_wait=max_wait,
+            max_bytes=max_bytes,
+        )
+    except SessionNotFound as e:
+        return {"ok": False, "session_id": session_id, "error": str(e)}
+    except TelnetError as e:
+        return {"ok": False, "session_id": session_id, "error": str(e)}
+
+
+async def telnet_list() -> dict:
+    """
+    List all currently open telnet sessions.
+
+    Returns:
+        dict with ``ok``, ``count``, and ``sessions`` — each entry has
+        ``session_id``, ``peer``, ``host``, ``port``, ``age_seconds``,
+        ``idle_seconds``, ``bytes_sent``, and ``bytes_received``.
+    """
+    sessions = telnet_engine.list_sessions()
+    return {"ok": True, "count": len(sessions), "sessions": sessions}
+
+
+async def telnet_close(session_id: str) -> dict:
+    """
+    Close an open telnet session and free its connection.
+
+    Args:
+        session_id: id returned by `telnet_connect`.
+
+    Returns:
+        dict with ``ok`` and ``closed`` — or ``ok: false`` if the id is unknown.
+    """
+    try:
+        return await telnet_engine.close(session_id)
+    except SessionNotFound as e:
+        return {"ok": False, "session_id": session_id, "error": str(e)}
+
+
+# ── Recon: nmap port/service scanning ────────────────────────────────────────
 
 
 async def nmap_scan(
@@ -46,9 +253,10 @@ async def nmap_scan(
     """
     Scan a host with nmap and return parsed results (open ports, services, OS).
 
-    This is the structured scanning + OS-detection tool, backed by nmap with XML
-    output parsed into JSON. Use it instead of hand-running nmap when you want
-    clean, machine-readable fields rather than nmap's console text.
+    The structured port-recon tool: it runs nmap with XML output parsed into
+    clean JSON, so you get machine-readable fields instead of nmap's console
+    text. Use it to discover what's listening before driving a service with
+    `telnet_connect` or `http_fetch`.
 
     What it detects:
       * open TCP ports (default: nmap's top 100; pass `ports` or `top_ports`);
@@ -56,12 +264,12 @@ async def nmap_scan(
       * an OS-family guess with accuracy when `os_detect` is on (nmap -O).
 
     Privileges: it uses a TCP connect scan (-sT), which works without root.
-    `os_detect` (-O) needs root/raw sockets — without them nmap will say so and
-    that message is surfaced in `warnings`.
+    `os_detect` (-O) needs root/raw sockets — without them nmap says so and that
+    message is surfaced in `warnings`.
 
     Args:
         host: target hostname or IP address.
-        ports: explicit ports to scan, e.g. [22, 80, 5038]. Overrides top_ports.
+        ports: explicit ports to scan, e.g. [22, 23, 80]. Overrides top_ports.
         top_ports: scan nmap's N most common ports instead of a fixed list.
         service_detect: run service/version detection (-sV). Default True.
         os_detect: attempt OS fingerprinting (-O). Needs root. Default False.
@@ -72,7 +280,7 @@ async def nmap_scan(
     Returns:
         dict with ok, the host record(s) (address, state, open_ports with
         service/version, os_matches), the exact nmap argv, and any warnings.
-        Only hosts you own or are authorized to test should be scanned.
+        Only scan hosts you own or are authorized to test.
     """
     return await nmap_engine.scan(
         host,
@@ -83,6 +291,9 @@ async def nmap_scan(
         skip_ping=skip_ping,
         timeout=timeout,
     )
+
+
+# ── Recon: HTTP fetching / scraping via curl ─────────────────────────────────
 
 
 async def http_fetch(
@@ -98,10 +309,10 @@ async def http_fetch(
     """
     Fetch a URL with curl and return the raw HTTP response.
 
-    A thin, scriptable curl wrapper for web scraping and API probing: returns
-    the status code, response headers, final URL (after redirects), and the
-    decoded body. Body is capped at 5 MB. Use `web_scrape` instead if you want
-    parsed text/links rather than raw markup.
+    A thin, scriptable curl wrapper for probing web services and APIs found
+    during recon: returns the status code, response headers, final URL (after
+    redirects), and the decoded body. Body is capped at 5 MB. Use `web_scrape`
+    instead if you want parsed text/links rather than raw markup.
 
     Args:
         url: http(s) URL to fetch.
@@ -159,8 +370,9 @@ async def web_scrape(
     Fetch a web page with curl and extract its title, visible text, and links.
 
     Downloads the page (following redirects), strips scripts/styles/markup, and
-    returns clean readable text plus absolutised links — the typical building
-    block for scraping. For non-HTML responses the raw body is returned as text.
+    returns clean readable text plus absolutised links — handy for fingerprinting
+    a web service turned up by `nmap_scan`. For non-HTML responses the raw body
+    is returned as text.
 
     Args:
         url: http(s) URL to scrape.
@@ -210,74 +422,17 @@ async def web_scrape(
     }
 
 
-async def bash_exec(
-    command: str,
-    timeout: float = BASH_DEFAULT_TIMEOUT,
-    cwd: Optional[str] = None,
-    stdin: Optional[str] = None,
-) -> dict:
-    """
-    Run an arbitrary bash command and return stdout, stderr, and the exit code.
-
-    This is the general "leverage bash" tool: pass any shell command — including
-    pipelines — and get the captured result. It is the right tool when you want
-    to script multi-step administrative actions, e.g. piping a sequence of
-    printf payloads into netcat to drive a line protocol:
-
-        ( printf 'Action: Login\\r\\nUsername: admin\\r\\nSecret: ***\\r\\n\\r\\n'; \\
-          sleep 1; \\
-          printf 'Action: Command\\r\\nCommand: database show\\r\\n\\r\\n'; \\
-          sleep 5 ) | nc -w 8 <ip> <port>
-
-    Construct the pipeline as you would by hand and pass it as `command`. Keep
-    CRLF (\\r\\n) line endings for line protocols like AMI, and quote payloads
-    carefully when a secret contains shell metacharacters.
-
-    The command runs through `bash -c` in its own process group, is bounded by
-    `timeout` seconds, and stdout/stderr are each capped (256 KB by default).
-
-    Allowlist: every command invoked must be on the configured allowlist (default
-    covers nmap, nc, ping, printf, sleep, curl, dig, and similar network-admin
-    tools). Command substitution ($(...), backticks) is rejected. Requests that
-    invoke anything else come back with `blocked: true` and an explanation rather
-    than running. Adjust the list with NETADMIN_MCP_ALLOWED_CMDS.
-
-    Args:
-        command: the bash command/script to execute.
-        timeout: wall-clock limit in seconds (1–120).
-        cwd: optional working directory to run in.
-        stdin: optional text piped to the command's standard input.
-
-    Returns:
-        dict with command, exit_code, stdout, stderr, timed_out, and truncation
-        flags — or {blocked: true, error: ...} if the allowlist rejected it.
-
-    Safety: this executes shell commands on the machine running the server. The
-    allowlist is a guard rail, not a sandbox — only enable this server where
-    running shell commands is acceptable, and target only hosts you are
-    authorized to administer.
-    """
-    try:
-        res = await run_bash(command, timeout=timeout, cwd=cwd, stdin=stdin)
-    except CommandNotAllowed as e:
-        return {"command": command, "blocked": True, "error": str(e)}
-    return {
-        "command": res.command,
-        "exit_code": res.returncode,
-        "stdout": res.stdout,
-        "stderr": res.stderr,
-        "timed_out": res.timed_out,
-        "stdout_truncated": res.stdout_truncated,
-        "stderr_truncated": res.stderr_truncated,
-    }
-
-
 # All tools exposed by this server, in registration order.
 ALL_TOOLS = [
+    telnet_connect,
+    telnet_send,
+    telnet_read,
+    telnet_send_command,
+    telnet_list,
+    telnet_close,
     nmap_scan,
     http_fetch,
     web_scrape,
-    bash_exec,
 ]
 
 

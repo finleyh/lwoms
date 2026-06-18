@@ -1,21 +1,17 @@
 [project]
-name = "netadmin-mcp"
+name = "telnet-mcp"
 version = "1.0.0"
-description = "A small MCP server for network profiling and administration via nmap, curl, and a guarded bash runner."
+description = "A small MCP server for telnet sessions and port/HTTP recon (nmap, curl)."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"  # mcpo requires >=3.11
 license = { text = "MIT" }
 dependencies = [
     "mcp>=1.2.0",
-    "python-dotenv>=1.0.0",
+    "mcpo>=0.0.20",
 ]
 
 [project.scripts]
-netadmin-mcp = "server:main"
-
-[tool.uv]
-# Nothing fancy — this project has no dev-only deps yet. Add a [dependency-groups]
-# table here later if you want lint/test tooling that doesn't ship with the server.
+telnet-mcp = "server:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -23,4 +19,4 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 # Flat layout: the modules live at the repo root, not under a package dir.
-include = ["server.py", "mcp_tools.py", "nmap_engine.py", "curl_engine.py", "bash_engine.py"]
+include = ["server.py", "mcp_tools.py", "telnet_engine.py", "nmap_engine.py", "curl_engine.py"]

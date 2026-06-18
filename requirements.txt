@@ -1,2 +1,5 @@
+# Mirror of pyproject.toml dependencies, for non-uv installs (pip install -r).
+# Source of truth is pyproject.toml / uv.lock. Regenerate with:
+#   uv export --no-hashes -o requirements.txt
 mcp>=1.2.0
-python-dotenv>=1.0.0
+mcpo>=0.0.20
