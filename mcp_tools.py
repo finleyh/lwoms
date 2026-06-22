@@ -56,6 +56,29 @@ from curl_engine import (
     validate_url,
 )
 
+# Line terminator default, expressed as an *escaped* string ("\\r\\n", i.e. the
+# four characters backslash-r-backslash-n). This matters: if the default were the
+# literal CRLF, those raw control characters land in the tool's JSON Schema
+# `default`, and unescaped control characters are illegal inside JSON strings
+# (RFC 8259). Clients echo the default into their call arguments, and the strict
+# validator behind the HTTP endpoint then rejects the request with a 422
+# "invalid string". Keeping the default escaped here, and decoding it just before
+# use, keeps the schema clean while preserving CRLF behavior.
+DEFAULT_NEWLINE = "\\r\\n"
+
+_NEWLINE_ESCAPES = {"\\r": "\r", "\\n": "\n", "\\t": "\t", "\\0": "\0"}
+
+
+def _decode_newline(newline: str) -> str:
+    """Turn escape sequences like ``\\r\\n`` into real control characters.
+
+    A caller may pass either an escaped sequence ("\\r\\n") or a literal
+    terminator ("\r\n"); both resolve to the same bytes on the wire.
+    """
+    for esc, char in _NEWLINE_ESCAPES.items():
+        newline = newline.replace(esc, char)
+    return newline
+
 
 async def telnet_connect(
     host: str,
@@ -99,7 +122,7 @@ async def telnet_send(
     session_id: str,
     data: str,
     append_newline: bool = True,
-    newline: str = "\r\n",
+    newline: str = DEFAULT_NEWLINE,
 ) -> dict:
     """
     Send text to an open telnet session without waiting for the reply.
@@ -114,6 +137,8 @@ async def telnet_send(
         append_newline: append ``newline`` to the data so the remote acts on the
             line. Set False to send a raw fragment (e.g. a single keystroke).
         newline: line terminator to append; telnet convention is CRLF ("\\r\\n").
+            Accepts escape sequences (e.g. "\\r\\n", "\\n") or literal control
+            characters — both resolve to the same bytes.
 
     Returns:
         dict with ``ok`` and ``bytes_sent`` — or ``ok: false`` with an error if
@@ -121,7 +146,8 @@ async def telnet_send(
     """
     try:
         return await telnet_engine.send(
-            session_id, data, append_newline=append_newline, newline=newline
+            session_id, data, append_newline=append_newline,
+            newline=_decode_newline(newline),
         )
     except SessionNotFound as e:
         return {"ok": False, "session_id": session_id, "error": str(e)}
@@ -170,7 +196,7 @@ async def telnet_send_command(
     session_id: str,
     command: str,
     append_newline: bool = True,
-    newline: str = "\r\n",
+    newline: str = DEFAULT_NEWLINE,
     idle_timeout: float = READ_DEFAULT_IDLE,
     max_wait: float = READ_DEFAULT_MAX_WAIT,
     max_bytes: int = READ_DEFAULT_MAX_BYTES,
@@ -186,7 +212,8 @@ async def telnet_send_command(
         session_id: id returned by `telnet_connect`.
         command: command line to send.
         append_newline: append ``newline`` so the host runs the command.
-        newline: line terminator to append (default CRLF).
+        newline: line terminator to append (default CRLF). Accepts escape
+            sequences (e.g. "\\r\\n", "\\n") or literal control characters.
         idle_timeout: quiet period in seconds that ends the read (0.05–60).
         max_wait: hard ceiling in seconds on the read (0.1–300).
         max_bytes: cap on bytes returned (≤ 8 MB).
@@ -200,7 +227,7 @@ async def telnet_send_command(
             session_id,
             command,
             append_newline=append_newline,
-            newline=newline,
+            newline=_decode_newline(newline),
             idle_timeout=idle_timeout,
             max_wait=max_wait,
             max_bytes=max_bytes,

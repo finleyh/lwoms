@@ -35,7 +35,7 @@ Then open `http://localhost:8000/docs`.
 | Tool | What it does |
 |------|--------------|
 | `telnet_connect(host, port=23, timeout=10, read_banner=True)` | Open a connection, return a reusable `session_id` (and the connect banner). |
-| `telnet_send(session_id, data, append_newline=True, newline="\r\n")` | Write text to a session without reading the reply. |
+| `telnet_send(session_id, data, append_newline=True, newline="\\r\\n")` | Write text to a session without reading the reply. The terminator accepts escape sequences (`\\r\\n`, `\\n`) or literal control chars. |
 | `telnet_read(session_id, idle_timeout=1, max_wait=10, max_bytes=262144)` | Read output until the stream goes quiet (idle-based). |
 | `telnet_send_command(session_id, command, ...)` | Send a command and read the response in one call. |
 | `telnet_list()` | List live sessions with byte counts and idle/age timers. |
